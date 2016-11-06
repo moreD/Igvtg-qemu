@@ -227,6 +227,9 @@ attr=""
 libattr=""
 xfs=""
 
+vgt="yes"
+vgt_compositor_egl="yes"
+vgt_compositor_blt="yes"
 vhost_net="no"
 vhost_scsi="no"
 kvm="no"
@@ -830,6 +833,18 @@ for opt do
   --enable-sdl) sdl="yes"
   ;;
   --with-sdlabi=*) sdlabi="$optarg"
+  ;;
+  --disable-vgt) vgt="no"
+  ;;
+  --enable-vgt) vgt="yes"
+  ;;
+  --disable-vgt-compositor-egl) vgt_compositor_egl="no"
+  ;;
+  --enable-vgt-compositor-egl) vgt_compositor_egl="yes"
+  ;;
+  --disable-vgt-compositor-blt) vgt_compositor_blt="no"
+  ;;
+  --enable-vgt-compositor-blt) vgt_compositor_blt="yes"
   ;;
   --disable-qom-cast-debug) qom_cast_debug="no"
   ;;
@@ -2537,6 +2552,62 @@ EOF
     sdl_libs="$sdl_libs $x11_libs"
   fi
   libs_softmmu="$sdl_libs $libs_softmmu"
+fi
+
+##########################################
+# Intel GVT-g detection
+if test "$vgt" = "no" ; then
+  vgt_compositor_egl="no"
+  vgt_compositor_blt="no"
+fi
+
+##########################################
+# Intel GVT-g compositor display egl implementation detection
+if test "$vgt_compositor_egl" = "yes" ; then
+  if test "$vgt" = "yes" ; then
+    cat > $TMPC <<EOF
+#include <EGL/egl.h>
+int main(void) { return 0; }
+EOF
+    if test "$sdl" = "yes" ; then
+      vgt_compositor_egl_cflags=`$pkg_config --cflags egl 2> /dev/null`
+      if compile_prog "$vgt_compositor_egl_cflags" "" ; then
+        vgt_compositor_egl_libs=`$pkg_config --libs libdrm gl egl libudev 2> /dev/null`
+        libs_softmmu="$vgt_compositor_egl_libs $libs_softmmu"
+        QEMU_CFLAGS="$vgt_compositor_egl_cflags $QEMU_CFLAGS"
+        if test "$vgt_compositor_blt" = "yes" ; then
+          vgt_compositor_blt="no"
+        fi
+      else
+        echo "Intel GVT-g compositor egl will be disabled due to EGL library missed."
+        vgt_compositor_egl="no"
+      fi
+    else
+      echo "Intel GVT-g compositor egl will be disabled due to SDL disabled."
+      vgt_compositor_egl="no"
+    fi
+  else
+    vgt_compositor_egl="no"
+    echo "Intel GVT-g compositor egl will be disabled due to vgt disabled."
+  fi
+fi
+
+##########################################
+# Intel VGT-g compositor display blt implementation detection
+if test "$vgt_compositor_blt" = "yes" ; then
+  if test "$vgt" = "yes" ; then
+    if test "$sdl" = "yes" ; then
+      vgt_compositor_blt_cflags=`$pkg_config --cflags libdrm 2> /dev/null`
+      vgt_compositor_blt_libs=`$pkg_config --libs libdrm libudev 2> /dev/null`
+      libs_softmmu="$vgt_compositor_blt_libs $libs_softmmu"
+      QEMU_CFLAGS="$vgt_compositor_blt_cflags $QEMU_CFLAGS"
+    else
+      echo "Intel GVT-g compositor blt will be enabled but only remote display can be used."
+    fi
+  else
+    echo "Intel GVT-g compositor blt will be disabled due to vgt disabled."
+    vgt_compositor_blt="no"
+  fi
 fi
 
 ##########################################
@@ -4817,6 +4888,9 @@ if test "$darwin" = "yes" ; then
 fi
 echo "pixman            $pixman"
 echo "SDL support       $sdl $(echo_version $sdl $sdlversion)"
+echo "Intel GVT-g support $vgt"
+echo "Intel GVT-g compositor egl $vgt_compositor_egl"
+echo "Intel GVT-g compositor blt $vgt_compositor_blt"
 echo "GTK support       $gtk $(echo_version $gtk $gtk_version)"
 echo "GTK GL support    $gtk_gl"
 echo "VTE support       $vte $(echo_version $vte $vteversion)"
@@ -5080,6 +5154,15 @@ if test "$sdl" = "yes" ; then
   echo "CONFIG_SDL=y" >> $config_host_mak
   echo "CONFIG_SDLABI=$sdlabi" >> $config_host_mak
   echo "SDL_CFLAGS=$sdl_cflags" >> $config_host_mak
+fi
+if test "$vgt" = "yes" ; then
+  echo "CONFIG_VGT=y" >> $config_host_mak
+fi
+if test "$vgt_compositor_egl" = "yes" ; then
+  echo "CONFIG_VGT_COMPOSITOR_EGL=y" >> $config_host_mak
+fi
+if test "$vgt_compositor_blt" = "yes" ; then
+  echo "CONFIG_VGT_COMPOSITOR_BLT=y" >> $config_host_mak
 fi
 if test "$cocoa" = "yes" ; then
   echo "CONFIG_COCOA=y" >> $config_host_mak

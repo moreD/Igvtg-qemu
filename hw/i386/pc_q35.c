@@ -85,7 +85,16 @@ static void pc_q35_init(MachineState *machine)
      * In any case, try to make sure that guest addresses aligned at
      * 1G boundaries get mapped to host addresses aligned at 1G boundaries.
      */
-    if (machine->ram_size >= 0xb0000000) {
+    if (vgt_vga_enabled) {
+        /* There's a known issue for KVMGT when the GPU's aperture mem is located
+            * above high 4G. Limit the lowmem size to make sure aperture mem is always
+            * located in low 4G place.
+            */
+        lowmem = 0x80000000;
+        if (lowmem < machine->ram_size)
+            printf("RAM size is %ldMB, lowmem is %ldMB.\n",
+                machine->ram_size >> 20, lowmem >> 20);
+    } else if (machine->ram_size >= 0xb0000000) {
         lowmem = 0x80000000;
     } else {
         lowmem = 0xb0000000;
@@ -142,6 +151,13 @@ static void pc_q35_init(MachineState *machine)
                             pcmc->smbios_uuid_encoded,
                             SMBIOS_ENTRY_POINT_21);
     }
+
+#ifdef CONFIG_KVM
+    if (vgt_vga_enabled && kvm_enabled()) {
+        vgt_kvm_set_opregion_addr((pcms->below_4g_mem_size -
+                                  VGT_OPREGION_SIZE) & ~0xfff);
+    }
+#endif
 
     /* allocate ram and load rom/bios */
     if (!xen_enabled()) {
@@ -253,10 +269,29 @@ static void pc_q35_init(MachineState *machine)
                                     0xb100),
                       8, NULL, 0);
 
+#ifdef CONFIG_KVM
+    if (vgt_vga_enabled && kvm_enabled()) {
+        pcms->below_4g_mem_size = (pcms->below_4g_mem_size - VGT_OPREGION_SIZE) & ~0xfff;
+    }
+#endif
+
     pc_cmos_init(pcms, idebus[0], idebus[1], rtc_state);
 
     /* the rest devices to which pci devfn is automatically assigned */
-    pc_vga_init(isa_bus, host_bus);
+    /*
+     * Initialize XenGT hooks before normal VGA init. The
+     * ideal case is to have IGD presented as the primary
+     * graphics card in 00:02.0, and then have other emulated
+     * PCI VGA card all disabled. We still rely on Qemu to
+     * emulate legacy ISA ports, so requires the ISA vga logic.
+     */
+    if (vgt_vga_enabled && pcmc->pci_enabled) {
+        vgt_vga_init(host_bus);
+        isa_create_simple(isa_bus, "isa-vga");
+    } else {
+        pc_vga_init(isa_bus, pcmc->pci_enabled ? host_bus : NULL);
+    }
+    //pc_vga_init(isa_bus, host_bus);
     pc_nic_init(isa_bus, host_bus);
     if (pcmc->pci_enabled) {
         pc_pci_device_init(host_bus);

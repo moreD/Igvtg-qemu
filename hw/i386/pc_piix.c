@@ -123,7 +123,11 @@ static void pc_init1(MachineState *machine,
         if (!pcms->max_ram_below_4g) {
             pcms->max_ram_below_4g = 0xe0000000; /* default: 3.5G */
         }
-        lowmem = pcms->max_ram_below_4g;
+        if (vgt_vga_enabled) {
+            lowmem = 0xC0000000;
+        } else {
+            lowmem = pcms->max_ram_below_4g;
+        }
         if (machine->ram_size >= pcms->max_ram_below_4g) {
             if (pcmc->gigabyte_align) {
                 if (lowmem > 0xc0000000) {
@@ -172,6 +176,13 @@ static void pc_init1(MachineState *machine,
                             pcmc->smbios_uuid_encoded,
                             SMBIOS_ENTRY_POINT_21);
     }
+
+#ifdef CONFIG_KVM
+    if (vgt_vga_enabled && kvm_enabled()) {
+        vgt_kvm_set_opregion_addr((pcms->below_4g_mem_size -
+                                  VGT_OPREGION_SIZE) & ~0xfff);
+    }
+#endif
 
     /* allocate ram and load rom/bios */
     if (!xen_enabled()) {
@@ -227,7 +238,19 @@ static void pc_init1(MachineState *machine,
 
     pc_register_ferr_irq(gsi[13]);
 
-    pc_vga_init(isa_bus, pcmc->pci_enabled ? pci_bus : NULL);
+    /*
+     * Initialize XenGT hooks before normal VGA init. The
+     * ideal case is to have IGD presented as the primary
+     * graphics card in 00:02.0, and then have other emulated
+     * PCI VGA card all disabled. We still rely on Qemu to
+     * emulate legacy ISA ports, so requires the ISA vga logic.
+     */
+    if (vgt_vga_enabled && pcmc->pci_enabled) {
+        vgt_vga_init(pci_bus);
+        isa_create_simple(isa_bus, "isa-vga");
+    } else {
+        pc_vga_init(isa_bus, pcmc->pci_enabled ? pci_bus : NULL);
+    }
 
     assert(pcms->vmport != ON_OFF_AUTO__MAX);
     if (pcms->vmport == ON_OFF_AUTO_AUTO) {
@@ -265,6 +288,12 @@ static void pc_init1(MachineState *machine,
             idebus[i] = qdev_get_child_bus(DEVICE(dev), busname);
         }
     }
+
+#ifdef CONFIG_KVM
+    if (vgt_vga_enabled && kvm_enabled()) {
+        pcms->below_4g_mem_size = (pcms->below_4g_mem_size - VGT_OPREGION_SIZE) & ~0xfff;
+    }
+#endif
 
     pc_cmos_init(pcms, idebus[0], idebus[1], rtc_state);
 

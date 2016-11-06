@@ -443,6 +443,10 @@ static inline void sdl_display_init(DisplayState *ds, int full_screen,
 }
 #endif
 
+/* intel_vgt.c */
+void intel_vgt_display_init(DisplayState *ds, int full_screen, int no_frame);
+bool intel_vgt_check_composite_display(void);
+
 /* cocoa.m */
 #ifdef CONFIG_COCOA
 void cocoa_display_init(DisplayState *ds, int full_screen);

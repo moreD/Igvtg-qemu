@@ -143,6 +143,7 @@ static int rtc_utc = 1;
 static int rtc_date_offset = -1; /* -1 means no change */
 QEMUClockType rtc_clock;
 int vga_interface_type = VGA_NONE;
+int vgt = 0;
 static int full_screen = 0;
 static int no_frame = 0;
 int no_quit = 0;
@@ -1991,6 +1992,11 @@ static VGAInterfaceInfo vga_interfaces[VGA_TYPE_MAX] = {
         .name = "QXL VGA",
         .class_names = { "qxl-vga" },
     },
+    [VGA_VGT] = {
+        .opt_name = "vgt",
+        .name = "Intel VGT",
+        .class_names = { "vgt-vga" },
+    },
     [VGA_TCX] = {
         .opt_name = "tcx",
         .name = "TCX framebuffer",
@@ -2024,7 +2030,23 @@ static void select_vgahw(const char *p)
     assert(vga_interface_type == VGA_NONE);
     for (t = 0; t < VGA_TYPE_MAX; t++) {
         VGAInterfaceInfo *ti = &vga_interfaces[t];
-        if (ti->opt_name && strstart(p, ti->opt_name, &opts)) {
+        if (ti->opt_name && strstart(ti->opt_name, "vgt", &opts)) {
+            if (strstart(p, "xengt", &opts)) {
+                vga_interface_type = VGA_VGT;
+                break;
+
+            } else if (strstart(p, "vgt", &opts)) {
+                if (vgt) {
+                    vga_interface_type = VGA_VGT;
+                    break;
+
+                } else {
+                    fprintf(stderr, "Error: VGA is vgt, but -vgt not specified!\n");
+                    exit(1);
+                }
+            }
+
+        } else if (ti->opt_name && strstart(p, ti->opt_name, &opts)) {
             if (!vga_interface_available(t)) {
                 error_report("%s not available", ti->name);
                 exit(1);
@@ -3970,6 +3992,40 @@ int main(int argc, char **argv, char **envp)
                     exit(1);
                 }
                 break;
+#ifdef CONFIG_VGT
+            case QEMU_OPTION_vgt_low_gm_sz:
+                {
+                    char *ptr;
+                    vgt_low_gm_sz = strtol(optarg, &ptr, 10);
+                }
+                break;
+            case QEMU_OPTION_vgt_high_gm_sz:
+                {
+                    char *ptr;
+                    vgt_high_gm_sz = strtol(optarg, &ptr, 10);
+                }
+                break;
+            case QEMU_OPTION_vgt_fence_sz:
+                {
+                    char *ptr;
+                    vgt_fence_sz = strtol(optarg, &ptr, 10);
+                }
+                break;
+            case QEMU_OPTION_vgt_cap:
+                {
+                   char *ptr;
+                   vgt_cap = strtol(optarg, &ptr, 10);
+                }
+		break;
+            case QEMU_OPTION_vgt_monitor_config_file:
+                {
+                    vgt_monitor_config_file = optarg;
+                }
+                break;
+            case QEMU_OPTION_vgt:
+                vgt = 1;
+                break;
+#endif
             default:
                 os_parse_cmd_args(popt->index, optarg);
             }
@@ -4525,7 +4581,15 @@ int main(int argc, char **argv, char **envp)
         curses_display_init(ds, full_screen);
         break;
     case DT_SDL:
+#if defined(CONFIG_VGT_COMPOSITOR_EGL)
+        if (vgt_vga_enabled && intel_vgt_check_composite_display()) {
+            intel_vgt_display_init(ds, full_screen, no_frame);
+        } else {
+            sdl_display_init(ds, full_screen, no_frame);
+        }
+#else
         sdl_display_init(ds, full_screen, no_frame);
+#endif
         break;
     case DT_COCOA:
         cocoa_display_init(ds, full_screen);
